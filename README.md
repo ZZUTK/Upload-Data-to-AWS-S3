@@ -2,7 +2,7 @@
 
 ## Pre-requisites
 * Python 3.x
-* boto3
+* [boto3](https://boto3.amazonaws.com/v1/documentation/api/latest/index.html?id=docs_gateway)
 
 Tested on Ubuntu 16.04
 
