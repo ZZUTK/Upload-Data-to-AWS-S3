@@ -16,11 +16,9 @@ except (ModuleNotFoundError, ImportError):
 
 
 # Go to https://klam-sj.corp.adobe.com/aws/adobeaws.php?userData=klam for the following info
-Your_Access_Key = 'ASIAU555WZTZYYEBG7EC'
-Your_Secret_Key = 'IVYeQy1AmKFz5tVtywwh8HuYEHw11NgcobvSpt/9'
-Your_Toke = 'FwoGZXIvYXdzEMr//////////wEaDGOqQVuPdKVi6jsdhyKsAZ6lbv+It/BMxP+DoZJriT3VCNwHyyBpHSHPtZZHwrjHxh1RRBDHvDszOSIIR5LG1lD6Kx/piaYMYR+Er1YQKD4C2PXMWvUwfrsXhadJhn/DIiPSR1B0brxCGowuYxEUTorMzeYxYjnCSE2GBtkCc6vccCUwcsCZo0/Vf0YTpk9Iz7ZtdlHDW/zsnE+IZCvibpSmmjusXicWsM2x6//Cb3Ei2Ai9L20k5HfeWUMov5bC8wUyKeAJNywrxmwt+D8r8VI3UmzXp0JrNrO89EHnnH2t52zSElIPefOWLCia'
-
-
+Your_Access_Key = 'aws_access_key_id'
+Your_Secret_Key = 'aws_secret_access_key'
+Your_Toke = 'aws_session_token'
 
 
 class ETA(object):
