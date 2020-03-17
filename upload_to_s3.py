@@ -1,9 +1,8 @@
-from os.path import basename, join, isfile, isdir
-from glob import iglob, glob
+from os.path import basename, join, isfile, isdir, realpath, expanduser
+from glob import glob
 import threading
 from time import sleep, time
-from os import walk, system
-from os.path import join, expanduser
+from os import walk
 try:
     import queue
 except (ModuleNotFoundError, ImportError):
@@ -12,9 +11,16 @@ try:
     import boto3
     import boto3.session
 except (ModuleNotFoundError, ImportError):
-    print('Require boto3, please refer to '
-          'https://boto3.amazonaws.com/v1/documentation/api/latest/guide/quickstart.html')
-    exit(1)
+    raise Exception('Require boto3, please refer to '
+                    'https://boto3.amazonaws.com/v1/documentation/api/latest/guide/quickstart.html')
+
+
+# Go to https://klam-sj.corp.adobe.com/aws/adobeaws.php?userData=klam for the following info
+Your_Access_Key = 'ASIAU555WZTZYYEBG7EC'
+Your_Secret_Key = 'IVYeQy1AmKFz5tVtywwh8HuYEHw11NgcobvSpt/9'
+Your_Toke = 'FwoGZXIvYXdzEMr//////////wEaDGOqQVuPdKVi6jsdhyKsAZ6lbv+It/BMxP+DoZJriT3VCNwHyyBpHSHPtZZHwrjHxh1RRBDHvDszOSIIR5LG1lD6Kx/piaYMYR+Er1YQKD4C2PXMWvUwfrsXhadJhn/DIiPSR1B0brxCGowuYxEUTorMzeYxYjnCSE2GBtkCc6vccCUwcsCZo0/Vf0YTpk9Iz7ZtdlHDW/zsnE+IZCvibpSmmjusXicWsM2x6//Cb3Ei2Ai9L20k5HfeWUMov5bC8wUyKeAJNywrxmwt+D8r8VI3UmzXp0JrNrO89EHnnH2t52zSElIPefOWLCia'
+
+
 
 
 class ETA(object):
@@ -80,7 +86,7 @@ class ETA(object):
 
 
 class UploadS3Parallel(object):
-    def __init__(self, num_workers=2, max_queue_size=8):
+    def __init__(self, num_workers=2, max_queue_size=8, region='us-west-2'):
         self.num_workers = num_workers
         self.max_queue_size = max_queue_size
         self.queue = queue.Queue(maxsize=self.max_queue_size)
@@ -88,35 +94,23 @@ class UploadS3Parallel(object):
         self._threads = []
         self.wait_time = .1
         self.my_name = 'Thread'
-        self.s3 = boto3.client('s3')
-        try:
-            self._credentials, self._config = self._detect_settings()
-            # print(self._credentials)
-            # print(self._config)
-        except:
-            raise Exception('Cannot find credentials')
-
-    def _detect_settings(self, aws_dir=None):
-        if aws_dir is None:
-            aws_dir = join(expanduser('~'), '.aws')
-        credentials = {'aws_access_key_id': None, 'aws_secret_access_key': None}
-        with open(join(aws_dir, 'credentials'), 'r') as f:
-            for line in f.readlines():
-                segs = [_.strip() for _ in line.strip().split('=')]
-                if segs[0] in credentials.keys():
-                    credentials[segs[0]] = segs[1]
-        config = {'region': None}
-        with open(join(aws_dir, 'config'), 'r') as f:
-            for line in f.readlines():
-                segs = [_.strip() for _ in line.strip().split('=')]
-                if segs[0] in config.keys():
-                    config[segs[0]] = segs[1]
-        return credentials, config
+        self.region = region
+        self.s3 = boto3.client(
+            's3',
+            aws_access_key_id=Your_Access_Key,
+            aws_secret_access_key=Your_Secret_Key,
+            aws_session_token=Your_Toke
+        )
 
     def check_files(self, bucket_name, num_print=float('inf')):
         if bucket_name in self.get_bucket_names():
             cnt = 0
-            s3 = boto3.resource('s3')
+            s3 = boto3.resource(
+                's3',
+                aws_access_key_id=Your_Access_Key,
+                aws_secret_access_key=Your_Secret_Key,
+                aws_session_token=Your_Toke,
+            )
             bucket = s3.Bucket(bucket_name)
             for obj in bucket.objects.all():
                 print(obj)
@@ -132,12 +126,19 @@ class UploadS3Parallel(object):
     def create_bucket(self, bucket_name):
         if bucket_name in self.get_bucket_names():
             print('The Bucket {} already exist!'.format(bucket_name))
+            if input('Continue to write into Bucket {}?[y/n]'.format(bucket_name)) != 'y':
+                exit(0)
         else:
             self.s3.create_bucket(Bucket=bucket_name)
 
     def delete_bucket(self, bucket_name):
         if bucket_name in self.get_bucket_names():
-            s3 = boto3.resource('s3')
+            s3 = boto3.resource(
+                's3',
+                aws_access_key_id=Your_Access_Key,
+                aws_secret_access_key=Your_Secret_Key,
+                aws_session_token=Your_Toke,
+            )
             bucket = s3.Bucket(bucket_name)
             for obj in bucket.objects.all():
                 obj.delete()
@@ -200,7 +201,14 @@ class UploadS3Parallel(object):
                 print(print_str)
                 t_start = time()
         f.close()
-        self.s3.upload_file('file_list.txt', bucket_name, 'file_list.txt', ExtraArgs={'ACL': 'public-read'})
+        key = 'file_list.txt' if bucket_folder is None else join(bucket_folder, 'file_list.txt')
+        self.s3.upload_file('file_list.txt', bucket_name, key, ExtraArgs={'ACL': 'public-read'})
+        with open('meta.txt', 'w') as f:
+            f.writelines('bucket_name:{}\n'
+                         'bucket_folder:{}\n'
+                         'local_data_dir:{}\n'.format(bucket_name, bucket_folder, realpath(data_dir)))
+        key = 'meta.txt' if bucket_folder is None else join(bucket_folder, 'meta.txt')
+        self.s3.upload_file('meta.txt', bucket_name, key, ExtraArgs={'ACL': 'public-read'})
 
         while not self.queue.empty():
             print('{} files left ...'.format(self.queue.qsize()))
@@ -208,7 +216,7 @@ class UploadS3Parallel(object):
 
         self.stop()
         print('{} files are uploaded to Bucket {}'.format(cnt, bucket_name))
-        print('File names are listed in Bucket {}/file_list.txt'.format(bucket_name))
+        #print('File names are listed in Bucket {}/file_list.txt'.format(bucket_name))
 
     def is_running(self):
         return self._stop_event is not None and not self._stop_event.is_set()
@@ -243,7 +251,11 @@ class UploadS3Parallel(object):
         :param bucket_folder: str, folder name in the bucket, where the data is uploaded to
         :return:
         """
-        session = boto3.session.Session()
+        session = boto3.session.Session(
+            aws_access_key_id=Your_Access_Key,
+            aws_secret_access_key=Your_Secret_Key,
+            aws_session_token=Your_Toke
+        )
         s3 = session.resource('s3')
         while self.is_running():
             try:
@@ -253,9 +265,11 @@ class UploadS3Parallel(object):
                     if bucket_folder is not None:
                         key = join(bucket_folder, key)
                     if is_public:
-                        s3.Bucket(bucket_name).put_object(Key=key, Body=data, ACL='public-read')
+                        s3.meta.client.upload_file(Filename=data_path, Bucket=bucket_name, Key=key)
+                        # s3.Bucket(bucket_name).put_object(Key=key, Body=data, ACL='public-read')
                     else:
-                        s3.Bucket(bucket_name).put_object(Key=key, Body=data)
+                        s3.meta.client.upload_file(Filename=data_path, Bucket=bucket_name, Key=key)
+                        # s3.Bucket(bucket_name).put_object(Key=key, Body=data)
                 else:
                     sleep(self.wait_time)
             except:
@@ -268,6 +282,7 @@ if __name__ == '__main__':
 
     parser = argparse.ArgumentParser('Upload data to AWS S3')
     parser.add_argument('--bucket', type=str, required=True, help='bucket name')
+    parser.add_argument('--folder', type=str, default=None, help='the folder name under the bucket')
     parser.add_argument('--data_dir', type=str, default=None, help='path to the folder of the dataset')
     parser.add_argument('--public', action='store_true', help='make the data public on S3')
     parser.add_argument('--workers', type=int, default=16, help='number of workers for parallel uploading')
@@ -275,15 +290,16 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     bucket_name = args.bucket
+    bucket_folder = args.folder
     action = args.action
     data_dir = args.data_dir
     is_public = args.public
     num_workers = args.workers
 
-    uploader = UploadS3Parallel(num_workers=num_workers, max_queue_size=num_workers*4)
+    uploader = UploadS3Parallel(num_workers=num_workers, max_queue_size=num_workers*16)
 
     if action == 'upload':
-        uploader(data_dir=data_dir, bucket_name=bucket_name, is_public=is_public, regex=('*',))
+        uploader(data_dir=data_dir, bucket_name=bucket_name, bucket_folder=bucket_folder, is_public=is_public, regex=('*',))
     elif action == 'check':
         uploader.check_files(bucket_name=bucket_name)
     elif action == 'delete':
