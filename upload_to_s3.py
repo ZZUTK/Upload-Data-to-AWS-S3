@@ -16,9 +16,9 @@ except (ModuleNotFoundError, ImportError):
 
 
 # Go to https://klam-sj.corp.adobe.com/aws/adobeaws.php?userData=klam for the following info
-Your_Access_Key = 'aws_access_key_id'
-Your_Secret_Key = 'aws_secret_access_key'
-Your_Toke = 'aws_session_token'
+aws_access_key_id='ASIAU555WZTZ6P2NRHL6'
+aws_secret_access_key='Wi6fKjkpIOsRalgMFFZuscIk1jQzYnWaZgHOKqbE'
+aws_session_token='FwoGZXIvYXdzELn//////////wEaDAiYatvl4t2sgFteTiLEAUVktuvmHrd4dqtN18UeDjM7CBzP/nLlf90fz67+PFqrsQmomLxpWfxOqfWkiWvSiiQSNHXdepOH1pYQ9hTfBNRwRpSVJIRT4cxsPdnpGcHKqmXiNUli8jrcucWzmtQlLtGgk9dwM8A7LwfQMm+qWigYMN7fBn7IYBciYWsEXJwyA8GLMG2cCOZWnPNK61kDXm7LtnfllKky+JfS4bG2L3kQaXYq3Xn+/MTHAj6E/9uRjguke1zz8q15jJ+d460PnVQjAt0o3PTR+QUyLVXIB+5ka6j0u+gy9uuTJfH6UM1Dr9dZUU/ERTviDxefKNtmqDJRjSrnNWm7Og=='
 
 
 class ETA(object):
@@ -95,9 +95,9 @@ class UploadS3Parallel(object):
         self.region = region
         self.s3 = boto3.client(
             's3',
-            aws_access_key_id=Your_Access_Key,
-            aws_secret_access_key=Your_Secret_Key,
-            aws_session_token=Your_Toke
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token
         )
 
     def check_files(self, bucket_name, num_print=float('inf')):
@@ -105,9 +105,9 @@ class UploadS3Parallel(object):
             cnt = 0
             s3 = boto3.resource(
                 's3',
-                aws_access_key_id=Your_Access_Key,
-                aws_secret_access_key=Your_Secret_Key,
-                aws_session_token=Your_Toke,
+                aws_access_key_id=aws_access_key_id,
+                aws_secret_access_key=aws_secret_access_key,
+                aws_session_token=aws_session_token,
             )
             bucket = s3.Bucket(bucket_name)
             for obj in bucket.objects.all():
@@ -133,9 +133,9 @@ class UploadS3Parallel(object):
         if bucket_name in self.get_bucket_names():
             s3 = boto3.resource(
                 's3',
-                aws_access_key_id=Your_Access_Key,
-                aws_secret_access_key=Your_Secret_Key,
-                aws_session_token=Your_Toke,
+                aws_access_key_id=aws_access_key_id,
+                aws_secret_access_key=aws_secret_access_key,
+                aws_session_token=aws_session_token,
             )
             bucket = s3.Bucket(bucket_name)
             for obj in bucket.objects.all():
@@ -250,9 +250,9 @@ class UploadS3Parallel(object):
         :return:
         """
         session = boto3.session.Session(
-            aws_access_key_id=Your_Access_Key,
-            aws_secret_access_key=Your_Secret_Key,
-            aws_session_token=Your_Toke
+            aws_access_key_id=aws_access_key_id,
+            aws_secret_access_key=aws_secret_access_key,
+            aws_session_token=aws_session_token
         )
         s3 = session.resource('s3')
         while self.is_running():
@@ -263,7 +263,8 @@ class UploadS3Parallel(object):
                     if bucket_folder is not None:
                         key = join(bucket_folder, key)
                     if is_public:
-                        s3.meta.client.upload_file(Filename=data_path, Bucket=bucket_name, Key=key)
+                        s3.meta.client.upload_file(Filename=data_path, Bucket=bucket_name, Key=key,
+                                                   ExtraArgs={'ACL': 'public-read'})
                         # s3.Bucket(bucket_name).put_object(Key=key, Body=data, ACL='public-read')
                     else:
                         s3.meta.client.upload_file(Filename=data_path, Bucket=bucket_name, Key=key)
