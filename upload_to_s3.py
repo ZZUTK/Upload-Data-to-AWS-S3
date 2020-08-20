@@ -16,9 +16,9 @@ except (ModuleNotFoundError, ImportError):
 
 
 # Go to https://klam-sj.corp.adobe.com/aws/adobeaws.php?userData=klam for the following info
-aws_access_key_id='ASIAU555WZTZ6P2NRHL6'
-aws_secret_access_key='Wi6fKjkpIOsRalgMFFZuscIk1jQzYnWaZgHOKqbE'
-aws_session_token='FwoGZXIvYXdzELn//////////wEaDAiYatvl4t2sgFteTiLEAUVktuvmHrd4dqtN18UeDjM7CBzP/nLlf90fz67+PFqrsQmomLxpWfxOqfWkiWvSiiQSNHXdepOH1pYQ9hTfBNRwRpSVJIRT4cxsPdnpGcHKqmXiNUli8jrcucWzmtQlLtGgk9dwM8A7LwfQMm+qWigYMN7fBn7IYBciYWsEXJwyA8GLMG2cCOZWnPNK61kDXm7LtnfllKky+JfS4bG2L3kQaXYq3Xn+/MTHAj6E/9uRjguke1zz8q15jJ+d460PnVQjAt0o3PTR+QUyLVXIB+5ka6j0u+gy9uuTJfH6UM1Dr9dZUU/ERTviDxefKNtmqDJRjSrnNWm7Og=='
+aws_access_key_id = 'id'
+aws_secret_access_key = 'key'
+aws_session_token = 'token'
 
 
 class ETA(object):
@@ -84,7 +84,7 @@ class ETA(object):
 
 
 class UploadS3Parallel(object):
-    def __init__(self, num_workers=2, max_queue_size=8, region='us-west-2'):
+    def __init__(self, num_workers=2, max_queue_size=8, region='us-east-1'):
         self.num_workers = num_workers
         self.max_queue_size = max_queue_size
         self.queue = queue.Queue(maxsize=self.max_queue_size)
@@ -95,6 +95,7 @@ class UploadS3Parallel(object):
         self.region = region
         self.s3 = boto3.client(
             's3',
+            region_name=self.region,
             aws_access_key_id=aws_access_key_id,
             aws_secret_access_key=aws_secret_access_key,
             aws_session_token=aws_session_token
@@ -105,9 +106,10 @@ class UploadS3Parallel(object):
             cnt = 0
             s3 = boto3.resource(
                 's3',
+                region_name=self.region,
                 aws_access_key_id=aws_access_key_id,
                 aws_secret_access_key=aws_secret_access_key,
-                aws_session_token=aws_session_token,
+                aws_session_token=aws_session_token
             )
             bucket = s3.Bucket(bucket_name)
             for obj in bucket.objects.all():
@@ -127,7 +129,12 @@ class UploadS3Parallel(object):
             if input('Continue to write into Bucket {}?[y/n]'.format(bucket_name)) != 'y':
                 exit(0)
         else:
-            self.s3.create_bucket(Bucket=bucket_name)
+            try:
+                self.s3.create_bucket(Bucket=bucket_name, CreateBucketConfiguration={'LocationConstraint': self.region})
+            except Exception as e:
+                print(e)
+                print('Please create bucket manually via AWS console.')
+                exit(1)
 
     def delete_bucket(self, bucket_name):
         if bucket_name in self.get_bucket_names():
