@@ -344,21 +344,21 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser('Upload data to AWS S3')
-    parser.add_argument('-bucket', type=str, required=True, help='bucket name')
-    parser.add_argument('-folder', type=str, default=None, help='the folder name under the bucket for uploading')
-    parser.add_argument('-data', type=str, required=True,
+    parser.add_argument('--bucket', type=str, default='zzhang', help='bucket name')
+    parser.add_argument('--folder', type=str, default=None, help='the folder name under the bucket for uploading')
+    parser.add_argument('--data', type=str, default=None,
                         help='if upload, dir or path to the file(s)'
                              'if download, path to file in the bucket, '
                              'e.g., -data Folder/File.txt if download Bucket/Folder/File.txt')
-    parser.add_argument('-public', action='store_true', help='make the data public on S3')
-    parser.add_argument('-action', choices=['upload', 'download', 'list', 'delete'], default='upload',
+    parser.add_argument('--public', action='store_true', help='make the data public on S3')
+    parser.add_argument('--action', choices=['upload', 'download', 'list', 'delete'], default='upload',
                         help='upload - upload file(s)'
                              'download - download file'
                              'list - list files in a bucket'
                              'delete - delete a bucket or files in a bucket')
-    parser.add_argument('-v', action='store_true', help='print info')
-    parser.add_argument('-delete_files', type=str, default='*', help='file format to delete, e.g., .py')
-    parser.add_argument('-download_dir', type=str, default='./', help='dir to save download file')
+    parser.add_argument('--v', action='store_true', help='print info')
+    parser.add_argument('--delete-files', type=str, default='*', help='file format to delete, e.g., .py')
+    parser.add_argument('--download-dir', type=str, default='./', help='dir to save download file')
     args = parser.parse_args()
 
     bucket_name = args.bucket
@@ -370,6 +370,7 @@ if __name__ == '__main__':
     uploader = UploadS3Parallel()
 
     if action == 'upload':
+        assert data
         uploader(data_to_upload=data, bucket_name=bucket_name, bucket_folder=bucket_folder,
                  is_public=is_public, regex=('*',), verb=args.v)
     elif action == 'list':
@@ -377,6 +378,7 @@ if __name__ == '__main__':
     elif action == 'delete':
         uploader.delete_bucket(bucket_name=bucket_name, file_name=args.delete_files)
     elif action == 'download':
+        assert data
         uploader.download(bucket_name=bucket_name, file_key=data, save_dir=args.download_dir)
     else:
         raise Exception('Cannot recognize the action!')
