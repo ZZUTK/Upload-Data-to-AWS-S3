@@ -1,8 +1,9 @@
-from os.path import basename, join, isfile, isdir, realpath, expanduser, dirname, exists
+from os.path import basename, join, isfile, isdir, realpath, expanduser, dirname, exists, splitext
 from glob import glob
 import threading
 from time import sleep, time
-from os import walk
+from os import walk, makedirs
+from multiprocessing import cpu_count
 try:
     import queue
 except (ModuleNotFoundError, ImportError):
@@ -78,10 +79,9 @@ class ETA(object):
 
 
 class UploadS3Parallel(object):
-    def __init__(self, num_workers=2, max_queue_size=8, region='us-west-1',
-                 credentials=join(dirname(realpath(__file__)), 'credentials')):
-        self.num_workers = num_workers
-        self.max_queue_size = max_queue_size
+    def __init__(self, region='us-west-1', credentials=join(dirname(realpath(__file__)), 'credentials')):
+        self.num_workers = min(cpu_count() * 4, 16)
+        self.max_queue_size = self.num_workers * 4
         self.queue = queue.Queue(maxsize=self.max_queue_size)
         self._stop_event = None
         self._threads = []
@@ -112,7 +112,8 @@ class UploadS3Parallel(object):
                 [_ for _ in self._credentials_keys if _ not in credentials], path_to_credentials))
         return credentials
 
-    def check_files(self, bucket_name, num_print=float('inf')):
+    def check_files(self, bucket_name, num_print=float('inf'), verb=True):
+        file_list = []
         if bucket_name in self.get_bucket_names():
             cnt = 0
             s3 = boto3.resource(
@@ -124,12 +125,16 @@ class UploadS3Parallel(object):
             )
             bucket = s3.Bucket(bucket_name)
             for obj in bucket.objects.all():
-                print(obj)
+                file_list.append(obj.key)
                 cnt += 1
+                if verb:
+                    print(file_list[-1])
                 if cnt >= num_print:
                     break
+            return file_list
         else:
             print('The Bucket {} does not exist!'.format(bucket_name))
+            return []
 
     def get_bucket_names(self):
         return [bucket['Name'] for bucket in self.s3.list_buckets()['Buckets']]
@@ -159,17 +164,36 @@ class UploadS3Parallel(object):
             bucket = s3.Bucket(bucket_name)
             cnt_remain = 0
             for obj in bucket.objects.all():
-                if file_name is None or file_name in obj.key:
+                if file_name is None or len(file_name) == 0 or file_name in obj.key or file_name in ['*']:
                     obj.delete()
                     print('Deleted {}'.format(obj.key))
                 else:
                     cnt_remain += 1
-                    print('Skip {}'.format(obj.key))
             if cnt_remain == 0 and file_name is None:
                 bucket.delete()
                 print('Deleted Bucket {}'.format(bucket_name))
         else:
             print('The Bucket {} does not exist!'.format(bucket_name))
+
+    def download(self, bucket_name, file_key=None, save_dir='./', verb=True):
+        if not exists(save_dir) or not isdir(save_dir):
+            makedirs(save_dir)
+        save_path = join(save_dir, basename(file_key))
+        if verb:
+            print('Downloading {}/{} to {}'.format(bucket_name, file_key, save_path))
+        try:
+            self.s3.download_file(bucket_name, file_key, save_path)
+        except Exception as e:
+            print('Download failed: {}'.format(e))
+
+        # files = self.check_files(bucket_name=bucket_name, num_print=float('inf'), verb=False)
+        # print(files)
+
+        # for idx, file in enumerate(files):
+        #     save_path = join(save_dir, )
+        #     if verb:
+        #         print('Downloading {} to {}'.format(file, join()save_dir))
+        #     self.s3.download_file(bucket_name, file, basename(file))
 
     def load_files(self, data_dir, regex=('*.*',)):
         assert isinstance(regex, (list, tuple)) and len(regex) > 0
@@ -179,67 +203,80 @@ class UploadS3Parallel(object):
                 files_path.extend([_ for _ in glob(join(root, ex)) if isfile(_)])
         return files_path
 
-    def __call__(self, data_dir, bucket_name=None, bucket_folder=None, is_public=False, regex=('*.*',)):
+    def __call__(self, data_to_upload, bucket_name=None, bucket_folder=None, is_public=False, regex=('*.*',), verb=False):
         """
         upload data to S3
-        :param data_dir: str, dir to the data, may include subdirs
-        :param bucket_name: str, name of the bucket, must be lower-case
-        :param bucket_folder: str, folder path under the bucket to store data
-        :param is_public: bool, whether make the data to be public (accessible publicly)
-        :param regex: tuple of str, file patterns to upload, e.g., ('*.jpg', '.*png') to upload jpg and png images
+        Args:
+            data_to_upload: str, dir to the data that may include subdirs, or path to a file
+            bucket_name: str, name of the bucket, must be lower-case
+            bucket_folder: str, folder path under the bucket to store data
+            is_public: bool, whether make the data to be public (accessible publicly)
+            regex: tuple of str, file patterns to upload, e.g., ('*.jpg', '.*png') to upload jpg and png images
+            verb: bool, whether print uploading info
+
+        Returns:
+
         """
-        assert isdir(data_dir)
-        # load file path
-        files = self.load_files(data_dir=data_dir, regex=regex)
+        assert isinstance(data_to_upload, str) and exists(data_to_upload)
 
         # create bucket on S3
         if bucket_name is None:
-            bucket_name = basename(data_dir)
+            bucket_name = splitext(basename(data_to_upload))[0]
         bucket_name = bucket_name.lower()
         self.create_bucket(bucket_name=bucket_name)
 
-        # start upload workers
-        self._stop_event = threading.Event()
-        self.start(bucket_name=bucket_name, bucket_folder=bucket_folder, is_public=is_public)
+        # upload a single file
+        if isfile(data_to_upload):
+            key = basename(data_to_upload) if bucket_folder is None else join(bucket_folder, basename(data_to_upload))
+            print('Uploading {} to Bucket {}/{} {}'.format(
+                    data_to_upload, bucket_name, key, '(public)' if is_public else ''))
+            self.s3.upload_file(data_to_upload, bucket_name, key, ExtraArgs={'ACL': 'public-read' if is_public else ''})
+            cnt = 1
 
-        # set up time estimator
-        num_total_files = len(files)
-        eta = ETA(num_total=num_total_files)
-        cnt = 0
-        print('Queue Preparing ...')
-        t_start = time()
-        f = open('file_list.txt', 'w')
-        for file in files:
-            key = file.split(data_dir)[-1]
-            if key[0] in ['/']:
-                key = key[1:]
-            self.queue.put([file, key])
-            f.writelines(key + '\n')
-            cnt += 1
-            if cnt % 100 == 0:
-                print_str = '[{:0{w}d}/{:0{w}d}] ETA: {}'.format(
-                    cnt, num_total_files, eta(t_start=t_start, t_end=time(), n_start=cnt - 100, n_end=cnt),
-                    w=len(str(num_total_files))
-                )
-                print(print_str)
-                t_start = time()
-        f.close()
-        key = 'file_list.txt' if bucket_folder is None else join(bucket_folder, 'file_list.txt')
-        self.s3.upload_file('file_list.txt', bucket_name, key, ExtraArgs={'ACL': 'public-read'})
-        with open('meta.txt', 'w') as f:
-            f.writelines('bucket_name:{}\n'
-                         'bucket_folder:{}\n'
-                         'local_data_dir:{}\n'.format(bucket_name, bucket_folder, realpath(data_dir)))
-        key = 'meta.txt' if bucket_folder is None else join(bucket_folder, 'meta.txt')
-        self.s3.upload_file('meta.txt', bucket_name, key, ExtraArgs={'ACL': 'public-read'})
+        else:  # upload files in a folder
+            files = self.load_files(data_dir=data_to_upload, regex=regex)
 
-        while not self.queue.empty():
-            print('{} files left ...'.format(self.queue.qsize()))
-            sleep(1)
+            # start upload workers
+            self._stop_event = threading.Event()
+            self.start(bucket_name=bucket_name, bucket_folder=bucket_folder, is_public=is_public, verb=verb)
 
-        self.stop()
-        print('{} files are uploaded to Bucket {}'.format(cnt, bucket_name))
-        #print('File names are listed in Bucket {}/file_list.txt'.format(bucket_name))
+            # set up time estimator
+            num_total_files = len(files)
+            eta = ETA(num_total=num_total_files)
+            cnt = 0
+            print('Queue Preparing ...')
+            t_start = time()
+            f = open('file_list.txt', 'w')
+            for file in files:
+                key = data_to_upload.join(file.split(data_to_upload)[1:])
+                if key[0] in ['/']:
+                    key = key[1:]
+                self.queue.put([file, key])
+                f.writelines(key + '\n')
+                cnt += 1
+                if cnt % 100 == 0:
+                    print_str = '[{:0{w}d}/{:0{w}d}] ETA: {}'.format(
+                        cnt, num_total_files, eta(t_start=t_start, t_end=time(), n_start=cnt - 100, n_end=cnt),
+                        w=len(str(num_total_files))
+                    )
+                    print(print_str)
+                    t_start = time()
+            f.close()
+            key = 'file_list.txt' if bucket_folder is None else join(bucket_folder, 'file_list.txt')
+            self.s3.upload_file('file_list.txt', bucket_name, key, ExtraArgs={'ACL': 'public-read'})
+            with open('meta.txt', 'w') as f:
+                f.writelines('bucket_name:{}\n'
+                             'bucket_folder:{}\n'
+                             'local_data_dir:{}\n'.format(bucket_name, bucket_folder, realpath(data_to_upload)))
+            key = 'meta.txt' if bucket_folder is None else join(bucket_folder, 'meta.txt')
+            self.s3.upload_file('meta.txt', bucket_name, key, ExtraArgs={'ACL': 'public-read'})
+
+            while not self.queue.empty():
+                print('{} files left ...'.format(self.queue.qsize()))
+                sleep(1)
+
+            self.stop()
+        print('Done: {} file(s) -> Bucket {}'.format(cnt, bucket_name))
 
     def is_running(self):
         return self._stop_event is not None and not self._stop_event.is_set()
@@ -267,7 +304,7 @@ class UploadS3Parallel(object):
                 import traceback
                 traceback.print_exc()
 
-    def _upload(self, bucket_name, bucket_folder=None, is_public=False, verb=True):
+    def _upload(self, bucket_name, bucket_folder=None, is_public=False, verb=False):
         """
         upload data to S3
         :param bucket_name: str, name of bucket
@@ -307,29 +344,40 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser('Upload data to AWS S3')
-    parser.add_argument('--bucket', type=str, default='zzhang', help='bucket name')
-    parser.add_argument('--folder', type=str, default=None, help='the folder name under the bucket')
-    parser.add_argument('--data_dir', type=str, default='./', help='path to the folder of the dataset')
-    parser.add_argument('--public', action='store_true', help='make the data public on S3')
-    parser.add_argument('--workers', type=int, default=1, help='number of workers for parallel uploading')
-    parser.add_argument('--action', choices=['upload', 'delete', 'check'], default='upload', help='')
+    parser.add_argument('-bucket', type=str, required=True, help='bucket name')
+    parser.add_argument('-folder', type=str, default=None, help='the folder name under the bucket for uploading')
+    parser.add_argument('-data', type=str, required=True,
+                        help='if upload, dir or path to the file(s)'
+                             'if download, path to file in the bucket, '
+                             'e.g., -data Folder/File.txt if download Bucket/Folder/File.txt')
+    parser.add_argument('-public', action='store_true', help='make the data public on S3')
+    parser.add_argument('-action', choices=['upload', 'download', 'list', 'delete'], default='upload',
+                        help='upload - upload file(s)'
+                             'download - download file'
+                             'list - list files in a bucket'
+                             'delete - delete a bucket or files in a bucket')
+    parser.add_argument('-v', action='store_true', help='print info')
+    parser.add_argument('-delete_files', type=str, default='*', help='file format to delete, e.g., .py')
+    parser.add_argument('-download_dir', type=str, default='./', help='dir to save download file')
     args = parser.parse_args()
 
     bucket_name = args.bucket
     bucket_folder = args.folder
     action = args.action
-    data_dir = args.data_dir
+    data = args.data
     is_public = args.public
-    num_workers = args.workers
 
-    uploader = UploadS3Parallel(num_workers=num_workers, max_queue_size=num_workers*16)
+    uploader = UploadS3Parallel()
 
     if action == 'upload':
-        uploader(data_dir=data_dir, bucket_name=bucket_name, bucket_folder=bucket_folder, is_public=is_public, regex=('*',))
-    elif action == 'check':
+        uploader(data_to_upload=data, bucket_name=bucket_name, bucket_folder=bucket_folder,
+                 is_public=is_public, regex=('*',), verb=args.v)
+    elif action == 'list':
         uploader.check_files(bucket_name=bucket_name)
     elif action == 'delete':
-        uploader.delete_bucket(bucket_name=bucket_name)
+        uploader.delete_bucket(bucket_name=bucket_name, file_name=args.delete_files)
+    elif action == 'download':
+        uploader.download(bucket_name=bucket_name, file_key=data, save_dir=args.download_dir)
     else:
         raise Exception('Cannot recognize the action!')
 
