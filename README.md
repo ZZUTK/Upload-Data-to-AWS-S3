@@ -6,6 +6,9 @@
 
 Tested on Ubuntu 16.04
 
+## Get Credentials
+Go to https://klam-sj.corp.adobe.com/aws/adobeaws.php?userData=klam
+
 ## Upload Data
 
 ```

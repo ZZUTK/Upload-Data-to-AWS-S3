@@ -1,4 +1,4 @@
-from os.path import basename, join, isfile, isdir, realpath, expanduser
+from os.path import basename, join, isfile, isdir, realpath, expanduser, dirname, exists
 from glob import glob
 import threading
 from time import sleep, time
@@ -13,12 +13,6 @@ try:
 except (ModuleNotFoundError, ImportError):
     raise Exception('Require boto3, please refer to '
                     'https://boto3.amazonaws.com/v1/documentation/api/latest/guide/quickstart.html')
-
-
-# Go to https://klam-sj.corp.adobe.com/aws/adobeaws.php?userData=klam for the following info
-aws_access_key_id = 'id'
-aws_secret_access_key = 'key'
-aws_session_token = 'token'
 
 
 class ETA(object):
@@ -84,7 +78,8 @@ class ETA(object):
 
 
 class UploadS3Parallel(object):
-    def __init__(self, num_workers=2, max_queue_size=8, region='us-east-1'):
+    def __init__(self, num_workers=2, max_queue_size=8, region='us-west-1',
+                 credentials=join(dirname(realpath(__file__)), 'credentials')):
         self.num_workers = num_workers
         self.max_queue_size = max_queue_size
         self.queue = queue.Queue(maxsize=self.max_queue_size)
@@ -93,13 +88,29 @@ class UploadS3Parallel(object):
         self.wait_time = .1
         self.my_name = 'Thread'
         self.region = region
+        self._credentials_keys = ['aws_access_key_id', 'aws_secret_access_key', 'aws_session_token']
+        self._credentials = self.load_credentials(credentials)
         self.s3 = boto3.client(
             's3',
             region_name=self.region,
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key,
-            aws_session_token=aws_session_token
+            aws_access_key_id=self._credentials[self._credentials_keys[0]],
+            aws_secret_access_key=self._credentials[self._credentials_keys[1]],
+            aws_session_token=self._credentials[self._credentials_keys[2]]
         )
+
+    def load_credentials(self, path_to_credentials):
+        if not exists(path_to_credentials) or not isfile(path_to_credentials):
+            raise Exception('Cannot find the credential file {}'.format(path_to_credentials))
+        credentials = {}
+        with open(path_to_credentials, 'r') as f:
+            for line in f.readlines():
+                if '=' in line and any([_ in line for _ in self._credentials_keys]):
+                    segs = line.strip().split('=')
+                    credentials[segs[0].strip()] = '='.join(segs[1:]).strip()
+        if len(self._credentials_keys) != len(credentials):
+            raise Exception('Cannot find {} from {}'.format(
+                [_ for _ in self._credentials_keys if _ not in credentials], path_to_credentials))
+        return credentials
 
     def check_files(self, bucket_name, num_print=float('inf')):
         if bucket_name in self.get_bucket_names():
@@ -107,9 +118,9 @@ class UploadS3Parallel(object):
             s3 = boto3.resource(
                 's3',
                 region_name=self.region,
-                aws_access_key_id=aws_access_key_id,
-                aws_secret_access_key=aws_secret_access_key,
-                aws_session_token=aws_session_token
+                aws_access_key_id=self._credentials[self._credentials_keys[0]],
+                aws_secret_access_key=self._credentials[self._credentials_keys[1]],
+                aws_session_token=self._credentials[self._credentials_keys[2]]
             )
             bucket = s3.Bucket(bucket_name)
             for obj in bucket.objects.all():
@@ -136,20 +147,27 @@ class UploadS3Parallel(object):
                 print('Please create bucket manually via AWS console.')
                 exit(1)
 
-    def delete_bucket(self, bucket_name):
+    def delete_bucket(self, bucket_name, file_name=None):
         if bucket_name in self.get_bucket_names():
             s3 = boto3.resource(
                 's3',
-                aws_access_key_id=aws_access_key_id,
-                aws_secret_access_key=aws_secret_access_key,
-                aws_session_token=aws_session_token,
+                region_name=self.region,
+                aws_access_key_id=self._credentials[self._credentials_keys[0]],
+                aws_secret_access_key=self._credentials[self._credentials_keys[1]],
+                aws_session_token=self._credentials[self._credentials_keys[2]]
             )
             bucket = s3.Bucket(bucket_name)
+            cnt_remain = 0
             for obj in bucket.objects.all():
-                obj.delete()
-                print('Delete {}'.format(obj))
-            bucket.delete()
-            print('Delete Bucket {}'.format(bucket_name))
+                if file_name is None or file_name in obj.key:
+                    obj.delete()
+                    print('Deleted {}'.format(obj.key))
+                else:
+                    cnt_remain += 1
+                    print('Skip {}'.format(obj.key))
+            if cnt_remain == 0 and file_name is None:
+                bucket.delete()
+                print('Deleted Bucket {}'.format(bucket_name))
         else:
             print('The Bucket {} does not exist!'.format(bucket_name))
 
@@ -249,7 +267,7 @@ class UploadS3Parallel(object):
                 import traceback
                 traceback.print_exc()
 
-    def _upload(self, bucket_name, bucket_folder=None, is_public=False):
+    def _upload(self, bucket_name, bucket_folder=None, is_public=False, verb=True):
         """
         upload data to S3
         :param bucket_name: str, name of bucket
@@ -257,18 +275,20 @@ class UploadS3Parallel(object):
         :return:
         """
         session = boto3.session.Session(
-            aws_access_key_id=aws_access_key_id,
-            aws_secret_access_key=aws_secret_access_key,
-            aws_session_token=aws_session_token
+            aws_access_key_id=self._credentials[self._credentials_keys[0]],
+            aws_secret_access_key=self._credentials[self._credentials_keys[1]],
+            aws_session_token=self._credentials[self._credentials_keys[2]]
         )
         s3 = session.resource('s3')
         while self.is_running():
             try:
                 if not self.queue.empty():
                     data_path, key = self.queue.get()
-                    data = open(data_path, 'rb')
+                    # data = open(data_path, 'rb')
                     if bucket_folder is not None:
                         key = join(bucket_folder, key)
+                    if verb:
+                        print('Uploading {} to Bucket {}/{}'.format(data_path, bucket_name, key))
                     if is_public:
                         s3.meta.client.upload_file(Filename=data_path, Bucket=bucket_name, Key=key,
                                                    ExtraArgs={'ACL': 'public-read'})
@@ -287,11 +307,11 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser('Upload data to AWS S3')
-    parser.add_argument('--bucket', type=str, required=True, help='bucket name')
+    parser.add_argument('--bucket', type=str, default='zzhang', help='bucket name')
     parser.add_argument('--folder', type=str, default=None, help='the folder name under the bucket')
-    parser.add_argument('--data_dir', type=str, default=None, help='path to the folder of the dataset')
+    parser.add_argument('--data_dir', type=str, default='./', help='path to the folder of the dataset')
     parser.add_argument('--public', action='store_true', help='make the data public on S3')
-    parser.add_argument('--workers', type=int, default=16, help='number of workers for parallel uploading')
+    parser.add_argument('--workers', type=int, default=1, help='number of workers for parallel uploading')
     parser.add_argument('--action', choices=['upload', 'delete', 'check'], default='upload', help='')
     args = parser.parse_args()
 
