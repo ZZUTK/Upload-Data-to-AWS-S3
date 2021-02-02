@@ -1,38 +1,54 @@
 # Upload Data to AWS S3
+Upload local file or folder to S3, and download S3 file or folder to local.
 
 ## Pre-requisites
 * Python 3.x
 * [boto3](https://boto3.amazonaws.com/v1/documentation/api/latest/index.html?id=docs_gateway)
 
-Tested on Ubuntu 16.04
+Tested on Ubuntu 16.04 and Mac 10.15.7
 
 ## Get Credentials
-Go to https://klam-sj.corp.adobe.com/aws/adobeaws.php?userData=klam
+Go to [https://klam.corp.adobe.com/](https://klam.corp.adobe.com/) to obtain credentials.
 
-## Upload Data
+## Upload Data to Bucket
 
+```bash
+python upload_to_s3.py <bucket_name> upload --data <path/to/local/file_or_folder>
 ```
-$ python upload_to_s3.py --bucket <bucket_name> --data_dir <path/to/data/folder> 
-  
+
+Upload data to a specific folder in the bucket:
+```bash
+python upload_to_s3.py <bucket_name> upload --data <path/to/local/file_or_folder> --folder <bucket_folder>
 ```
 
 If you want to make the data public on S3:
 
-```
-$ python upload_to_s3.py --bucket <bucket_name> --data_dir <path/to/data/folder> --public
-  
-```
-
-## Delete Bucket
-
-```
-$ python upload_to_s3.py --bucket <bucket_name> --action delete
-  
+```bash
+python upload_to_s3.py <bucket_name> upload --data <path/to/local/file_or_folder> --public
 ```
 
-## Check Uploaded Files
+## List Files in Bucket
 
+```bash
+python upload_to_s3.py <bucket_name> list
 ```
-$ python upload_to_s3.py --bucket <bucket_name> --action check
-  
+
+## Download Data from Bucket
+```bash
+python upload_to_s3.py <bucket_name> download --data <prefix/to/bucket/files> --download-dir <local_dir_to_save_data>
 ```
+If not set `--data`, it will download all files in the bucket. 
+If not set `--download-dir`, it will download to local folder `./s3_downloads`.
+
+
+## Delete Files from Bucket
+
+```bash
+python upload_to_s3.py <bucket_name> delete --data <prefix/to/bucket/files>
+```
+
+If not set `--data`, it will delete the whole bucket.
+
+
+
+

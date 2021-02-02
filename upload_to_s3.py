@@ -2,8 +2,9 @@ from os.path import basename, join, isfile, isdir, realpath, expanduser, dirname
 from glob import glob
 import threading
 from time import sleep, time
-from os import walk, makedirs
+from os import walk, makedirs, system
 from multiprocessing import cpu_count
+import sys
 try:
     import queue
 except (ModuleNotFoundError, ImportError):
@@ -12,8 +13,9 @@ try:
     import boto3
     import boto3.session
 except (ModuleNotFoundError, ImportError):
-    raise Exception('Require boto3, please refer to '
-                    'https://boto3.amazonaws.com/v1/documentation/api/latest/guide/quickstart.html')
+    system('pip3 install boto3')
+    import boto3
+    import boto3.session
 
 
 class ETA(object):
@@ -100,16 +102,22 @@ class UploadS3Parallel(object):
 
     def load_credentials(self, path_to_credentials):
         if not exists(path_to_credentials) or not isfile(path_to_credentials):
-            raise Exception('Cannot find the credential file {}'.format(path_to_credentials))
+            print('Cannot find the credential file {}'.format(path_to_credentials))
+            exit()
         credentials = {}
         with open(path_to_credentials, 'r') as f:
             for line in f.readlines():
                 if '=' in line and any([_ in line for _ in self._credentials_keys]):
                     segs = line.strip().split('=')
                     credentials[segs[0].strip()] = '='.join(segs[1:]).strip()
+                    if len(credentials[segs[0].strip()]) == 0:
+                        print('Empty credential: {}'.format(segs[0].strip()))
+                        exit(1)
         if len(self._credentials_keys) != len(credentials):
-            raise Exception('Cannot find {} from {}'.format(
+            print('Cannot find {} from {}'.format(
                 [_ for _ in self._credentials_keys if _ not in credentials], path_to_credentials))
+            exit(1)
+
         return credentials
 
     def check_files(self, bucket_name, num_print=float('inf'), verb=True):
@@ -149,11 +157,14 @@ class UploadS3Parallel(object):
                 self.s3.create_bucket(Bucket=bucket_name, CreateBucketConfiguration={'LocationConstraint': self.region})
             except Exception as e:
                 print(e)
-                print('Please create bucket manually via AWS console.')
                 exit(1)
 
-    def delete_bucket(self, bucket_name, file_name=None):
+    def delete_bucket(self, bucket_name, prefix=None):
         if bucket_name in self.get_bucket_names():
+            if prefix is None:
+                if input('Delete the whole Bucket {}?[y/n]'.format(bucket_name)) != 'y':
+                    exit(0)
+
             s3 = boto3.resource(
                 's3',
                 region_name=self.region,
@@ -162,38 +173,51 @@ class UploadS3Parallel(object):
                 aws_session_token=self._credentials[self._credentials_keys[2]]
             )
             bucket = s3.Bucket(bucket_name)
+            cnt_deleted = 0
             cnt_remain = 0
             for obj in bucket.objects.all():
-                if file_name is None or len(file_name) == 0 or file_name in obj.key or file_name in ['*']:
+                if prefix is None or len(prefix) == 0 or prefix in obj.key and len(obj.key.split(prefix)[0]) == 0:
                     obj.delete()
+                    cnt_deleted += 1
                     print('Deleted {}'.format(obj.key))
                 else:
                     cnt_remain += 1
-            if cnt_remain == 0 and file_name is None:
+            print('Deleted {} files, remain {} files in Bucket {}'.format(cnt_deleted, cnt_remain, bucket_name))
+            if cnt_remain == 0 and prefix is None:
                 bucket.delete()
                 print('Deleted Bucket {}'.format(bucket_name))
         else:
             print('The Bucket {} does not exist!'.format(bucket_name))
 
-    def download(self, bucket_name, file_key=None, save_dir='./', verb=True):
+    def download(self, bucket_name, prefix=None, save_dir='./', verb=True):
         if not exists(save_dir) or not isdir(save_dir):
             makedirs(save_dir)
-        save_path = join(save_dir, basename(file_key))
-        if verb:
-            print('Downloading {}/{} to {}'.format(bucket_name, file_key, save_path))
-        try:
-            self.s3.download_file(bucket_name, file_key, save_path)
-        except Exception as e:
-            print('Download failed: {}'.format(e))
 
-        # files = self.check_files(bucket_name=bucket_name, num_print=float('inf'), verb=False)
-        # print(files)
+        if prefix is None:
+            prefix = ''
+            file_list = self.check_files(bucket_name=bucket_name, verb=False)
+            print('Find {} files in Bucket {}'.format(len(file_list), bucket_name))
+            if input('Download all files?[y/n]'.format(bucket_name)) != 'y':
+                exit(0)
 
-        # for idx, file in enumerate(files):
-        #     save_path = join(save_dir, )
-        #     if verb:
-        #         print('Downloading {} to {}'.format(file, join()save_dir))
-        #     self.s3.download_file(bucket_name, file, basename(file))
+        session = boto3.session.Session(
+            region_name=self.region,
+            aws_access_key_id=self._credentials[self._credentials_keys[0]],
+            aws_secret_access_key=self._credentials[self._credentials_keys[1]],
+            aws_session_token=self._credentials[self._credentials_keys[2]]
+        )
+        s3 = session.resource('s3')
+        bucket = s3.Bucket(bucket_name)
+        for obj in bucket.objects.filter(Prefix=prefix):
+            save_path = join(save_dir, obj.key)
+            if not exists(dirname(save_path)) or not isdir(dirname(save_path)):
+                makedirs(dirname(save_path))
+            if verb:
+                print('\rDownloading Bucket {}/{} -> {}'.format(bucket_name, obj.key, save_path))
+            try:
+                bucket.download_file(obj.key, save_path)
+            except Exception as e:
+                print('[!] Failed download {}/{}: {}'.format(bucket_name, obj.key, e))
 
     def load_files(self, data_dir, regex=('*.*',)):
         assert isinstance(regex, (list, tuple)) and len(regex) > 0
@@ -244,7 +268,7 @@ class UploadS3Parallel(object):
             num_total_files = len(files)
             eta = ETA(num_total=num_total_files)
             cnt = 0
-            print('Queue Preparing ...')
+            print('Upload Start')
             t_start = time()
             f = open('file_list.txt', 'w')
             for file in files:
@@ -288,7 +312,7 @@ class UploadS3Parallel(object):
         for thread in self._threads:
             if thread.is_alive():
                 thread.join(timeout)
-            print('%s-%s: Stop' % (self.my_name, thread.name))
+            # print('%s-%s: Stop' % (self.my_name, thread.name))
         self._threads = []
         self._stop_event = None
         self.queue = None
@@ -299,7 +323,7 @@ class UploadS3Parallel(object):
                 thread = threading.Thread(target=self._upload, name=str(idx), kwargs=kwargs, daemon=False)
                 self._threads.append(thread)
                 thread.start()
-                print('%s-%s: Start' % (self.my_name, thread.name))
+                # print('%s-%s: Start' % (self.my_name, thread.name))
             except:
                 import traceback
                 traceback.print_exc()
@@ -312,6 +336,7 @@ class UploadS3Parallel(object):
         :return:
         """
         session = boto3.session.Session(
+            region_name=self.region,
             aws_access_key_id=self._credentials[self._credentials_keys[0]],
             aws_secret_access_key=self._credentials[self._credentials_keys[1]],
             aws_session_token=self._credentials[self._credentials_keys[2]]
@@ -325,7 +350,7 @@ class UploadS3Parallel(object):
                     if bucket_folder is not None:
                         key = join(bucket_folder, key)
                     if verb:
-                        print('Uploading {} to Bucket {}/{}'.format(data_path, bucket_name, key))
+                        print('Uploading {} -> Bucket {}/{}'.format(data_path, bucket_name, key))
                     if is_public:
                         s3.meta.client.upload_file(Filename=data_path, Bucket=bucket_name, Key=key,
                                                    ExtraArgs={'ACL': 'public-read'})
@@ -344,21 +369,20 @@ if __name__ == '__main__':
     import argparse
 
     parser = argparse.ArgumentParser('Upload data to AWS S3')
-    parser.add_argument('--bucket', type=str, default='zzhang', help='bucket name')
-    parser.add_argument('--folder', type=str, default=None, help='the folder name under the bucket for uploading')
-    parser.add_argument('--data', type=str, default=None,
-                        help='if upload, dir or path to the file(s)'
-                             'if download, path to file in the bucket, '
-                             'e.g., -data Folder/File.txt if download Bucket/Folder/File.txt')
-    parser.add_argument('--public', action='store_true', help='make the data public on S3')
-    parser.add_argument('--action', choices=['upload', 'download', 'list', 'delete'], default='upload',
+    parser.add_argument('bucket', type=str, help='bucket name')
+    parser.add_argument('action', choices=['upload', 'download', 'list', 'delete'],
                         help='upload - upload file(s)'
                              'download - download file'
                              'list - list files in a bucket'
                              'delete - delete a bucket or files in a bucket')
-    parser.add_argument('--v', action='store_true', help='print info')
-    parser.add_argument('--delete-files', type=str, default='*', help='file format to delete, e.g., .py')
-    parser.add_argument('--download-dir', type=str, default='./', help='dir to save download file')
+    parser.add_argument('--folder', type=str, default=None, help='the folder name under the bucket for uploading')
+    parser.add_argument('--data', type=str, default=None,
+                        help='if upload, path to local folder or file'
+                             'if download, prefix of folder or file in bucket'
+                             'if delete, prefix to folder or file in the bucket, and delete all if None')
+    parser.add_argument('--public', action='store_true', help='make the data public on S3')
+    parser.add_argument('--v', action='store_true', help='print info in upload')
+    parser.add_argument('--download-dir', type=str, default='./s3_downloads', help='dir to save download file')
     args = parser.parse_args()
 
     bucket_name = args.bucket
@@ -376,10 +400,9 @@ if __name__ == '__main__':
     elif action == 'list':
         uploader.check_files(bucket_name=bucket_name)
     elif action == 'delete':
-        uploader.delete_bucket(bucket_name=bucket_name, file_name=args.delete_files)
+        uploader.delete_bucket(bucket_name=bucket_name, prefix=data)
     elif action == 'download':
-        assert data
-        uploader.download(bucket_name=bucket_name, file_key=data, save_dir=args.download_dir)
+        uploader.download(bucket_name=bucket_name, prefix=data, save_dir=args.download_dir)
     else:
-        raise Exception('Cannot recognize the action!')
+        print('Cannot recognize the action!')
 
