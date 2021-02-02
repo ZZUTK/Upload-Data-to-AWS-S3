@@ -8,7 +8,8 @@ Upload local file or folder to S3, and download S3 file or folder to local.
 Tested on Ubuntu 16.04 and Mac 10.15.7
 
 ## Get Credentials
-Go to [https://klam.corp.adobe.com/](https://klam.corp.adobe.com/) to obtain credentials.
+Follow the [instruction](https://wiki.corp.adobe.com/pages/viewpage.action?spaceKey=~bwai&title=How+to+use+KLAM+to+authenticate+into+an+AWS+account+for+Adobe+Research)
+to `Copy Credentials` and paste to [`./credentials`](./credentials)
 
 ## Upload Data to Bucket
 
