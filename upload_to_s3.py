@@ -287,13 +287,13 @@ class UploadS3Parallel(object):
                     t_start = time()
             f.close()
             key = 'file_list.txt' if bucket_folder is None else join(bucket_folder, 'file_list.txt')
-            self.s3.upload_file('file_list.txt', bucket_name, key, ExtraArgs={'ACL': 'public-read'})
+            self.s3.upload_file('file_list.txt', bucket_name, key, ExtraArgs={'ACL': 'public-read' if is_public else ''})
             with open('meta.txt', 'w') as f:
                 f.writelines('bucket_name:{}\n'
                              'bucket_folder:{}\n'
                              'local_data_dir:{}\n'.format(bucket_name, bucket_folder, realpath(data_to_upload)))
             key = 'meta.txt' if bucket_folder is None else join(bucket_folder, 'meta.txt')
-            self.s3.upload_file('meta.txt', bucket_name, key, ExtraArgs={'ACL': 'public-read'})
+            self.s3.upload_file('meta.txt', bucket_name, key, ExtraArgs={'ACL': 'public-read' if is_public else ''})
 
             while not self.queue.empty():
                 print('{} files left ...'.format(self.queue.qsize()))
